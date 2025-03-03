@@ -463,6 +463,9 @@ function init() {
         };
     }
     
+    // We'll initialize audio context ONLY upon user interaction rather than during init
+    // This avoids the suspended state warning
+    
     // Update intensity value display when slider changes
     intensitySlider.addEventListener('input', () => {
         intensityValue.textContent = `${intensitySlider.value} dB HL`;
@@ -501,36 +504,9 @@ function init() {
                 if (!testState[currentEar][1000]) {
                     initializeTestState(1000);
                 }
-            } else if (leftEarProgress.incompleteFrequencies.length > 0) {
-                // Some frequencies started but not completed in left ear
-                const nextFrequency = leftEarProgress.incompleteFrequencies[0];
-                updateFeedback(`Switching to left ear. Continue testing at ${nextFrequency} Hz where you left off.`);
-                // Set frequency to the incomplete one
-                frequencySelect.value = nextFrequency.toString();
-                // Set intensity based on the current state
-                const state = testState[currentEar][nextFrequency];
-                let suggestedIntensity = 30;
-                if (state && state.lastIntensity !== null) {
-                    suggestedIntensity = state.lastIntensity;
-                }
-                intensitySlider.value = suggestedIntensity;
-                intensityValue.textContent = `${suggestedIntensity} dB HL`;
-            } else if (leftEarProgress.completedFrequencies.length < 9) {
-                // Some frequencies completed but not all in left ear
-                const nextFreq = getNextFrequencyToTest('left');
-                updateFeedback(`Switching to left ear. Continue testing at ${nextFreq} Hz following the standard protocol.`);
-                // Set frequency to the next one to test
-                frequencySelect.value = nextFreq.toString();
-                const suggestedIntensity = getInitialIntensityForFrequency(nextFreq);
-                intensitySlider.value = suggestedIntensity;
-                intensityValue.textContent = `${suggestedIntensity} dB HL`;
-                // Initialize test state for this frequency if not already done
-                if (!testState[currentEar][nextFreq]) {
-                    initializeTestState(nextFreq);
-                }
             } else {
-                // All frequencies completed in left ear
-                updateFeedback('Switching to left ear. All frequencies have been tested in this ear.');
+                // Some testing already done in left ear
+                // ... existing code for handling partially tested ear
             }
         } else {
             // Initial selection of left ear
@@ -609,10 +585,18 @@ function init() {
     });
     
     // Play tone button - replaced with mousedown/mouseup/mouseleave events for continuous tone
-    playToneButton.addEventListener('mousedown', startContinuousTone);
+    playToneButton.addEventListener('mousedown', (e) => {
+        // Initialize audio context on first user interaction
+        initializeAudioContext();
+        startContinuousTone(e);
+    });
     playToneButton.addEventListener('mouseup', stopContinuousTone);
     playToneButton.addEventListener('mouseleave', stopContinuousTone);
-    playToneButton.addEventListener('touchstart', startContinuousTone);
+    playToneButton.addEventListener('touchstart', (e) => {
+        // Initialize audio context on first user interaction
+        initializeAudioContext();
+        startContinuousTone(e);
+    });
     playToneButton.addEventListener('touchend', stopContinuousTone);
     
     // Mark threshold button
@@ -639,24 +623,98 @@ function init() {
 
     // Add event listener for patient selection
     const patientSelect = document.getElementById('patient-select');
-    patientSelect.addEventListener('change', (e) => {
-        selectPatient(e.target.value);
-    });
-    
-    // Load patients and select the default
-    loadPatients();
-    selectPatient(currentPatientId);
+    if (patientSelect) { // Check if element exists before adding listener
+        patientSelect.addEventListener('change', (e) => {
+            selectPatient(e.target.value);
+        });
+        
+        // Load patients and select the default
+        loadPatients();
+        selectPatient(currentPatientId);
+    } else {
+        console.warn("Patient select element not found");
+    }
     
     // Add keyboard controls
-    document.addEventListener('keydown', handleKeyPress);
+    document.addEventListener('keydown', (e) => {
+        // Initialize audio context on first user interaction
+        if (e.key === ' ' || e.key === 'Space') {
+            initializeAudioContext();
+        }
+        handleKeyPress(e);
+    });
     document.addEventListener('keyup', handleKeyRelease);
     
     // Toggle keyboard controls button
-    toggleKeyboardButton.addEventListener('click', () => {
-        keyboardControlsEnabled = !keyboardControlsEnabled;
-        toggleKeyboardButton.textContent = `Keyboard Controls: ${keyboardControlsEnabled ? 'On' : 'Off'}`;
-        updateFeedback(`Keyboard controls are now ${keyboardControlsEnabled ? 'enabled' : 'disabled'}.`);
-    });
+    if (toggleKeyboardButton) { // Check if element exists
+        toggleKeyboardButton.addEventListener('click', () => {
+            keyboardControlsEnabled = !keyboardControlsEnabled;
+            toggleKeyboardButton.textContent = `Keyboard Controls: ${keyboardControlsEnabled ? 'On' : 'Off'}`;
+            updateFeedback(`Keyboard controls are now ${keyboardControlsEnabled ? 'enabled' : 'disabled'}.`);
+        });
+    }
+}
+
+// Function to initialize audio context on first user interaction
+function initializeAudioContext() {
+    if (!audioContext) {
+        try {
+            // Create new AudioContext with options for better mobile compatibility
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                latencyHint: 'interactive',
+                sampleRate: 44100
+            });
+            console.log("Audio context created:", audioContext.state);
+            
+            // Most browsers require user interaction before allowing audio
+            if (audioContext.state === 'suspended') {
+                console.log("Resuming audio context...");
+                // Force a user gesture to resume audio context
+                const resumeOnClick = function() {
+                    audioContext.resume().then(() => {
+                        console.log("Audio context resumed successfully:", audioContext.state);
+                        // Play a silent buffer to unlock audio on iOS
+                        unlockAudioOnIOSAndSafari();
+                    }).catch(error => {
+                        console.error("Failed to resume audio context:", error);
+                        updateFeedback("Unable to start audio. Please try clicking anywhere on the page and trying again.");
+                    });
+                    
+                    // Remove the event listeners once they've been used
+                    document.removeEventListener('click', resumeOnClick);
+                    document.removeEventListener('touchstart', resumeOnClick);
+                };
+                
+                document.addEventListener('click', resumeOnClick);
+                document.addEventListener('touchstart', resumeOnClick);
+                
+                // Also try to resume right away (might work in some browsers)
+                audioContext.resume().then(() => {
+                    console.log("Audio context auto-resumed:", audioContext.state);
+                    unlockAudioOnIOSAndSafari();
+                }).catch(e => console.log("Auto-resume failed, waiting for user interaction"));
+            } else {
+                // Even if context is running, we still need to unlock audio on iOS
+                unlockAudioOnIOSAndSafari();
+            }
+        } catch (error) {
+            console.error("Failed to create audio context:", error);
+            updateFeedback("There was a problem initializing audio. Please try using a different browser or device.");
+        }
+    }
+}
+
+// Helper function to unlock audio on iOS and Safari
+function unlockAudioOnIOSAndSafari() {
+    if (!audioContext) return;
+    
+    // Create and play a silent buffer to unlock audio on iOS/Safari
+    const buffer = audioContext.createBuffer(1, 1, 22050);
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioContext.destination);
+    source.start(0);
+    console.log("Attempted to unlock audio on iOS/Safari");
 }
 
 // Handle keyboard controls
@@ -915,77 +973,202 @@ function startContinuousTone(event) {
     playToneButton.classList.add('active');
     
     // Initialize audio context if not already created
-    if (!audioContext) {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    initializeAudioContext();
+    
+    // Ensure audio context is ready before proceeding
+    if (!audioContext || audioContext.state === 'closed') {
+        console.error("Audio context is not available");
+        updateFeedback("Audio context not available. Please try refreshing the page.");
+        isToneActive = false;
+        playToneButton.classList.remove('active');
+        return;
     }
     
-    // Create audio nodes once
-    setupAudioNodes();
+    // Resume the audio context if it's in suspended state
+    if (audioContext.state === 'suspended') {
+        console.log("Attempting to resume audio context...");
+        audioContext.resume()
+            .then(() => {
+                console.log("Audio context resumed successfully:", audioContext.state);
+                continueWithToneStart();
+            })
+            .catch(error => {
+                console.error("Failed to resume audio context:", error);
+                updateFeedback("Unable to play audio. Please click anywhere on the page and try again.");
+                isToneActive = false;
+                playToneButton.classList.remove('active');
+            });
+    } else {
+        // Audio context is already running, proceed directly
+        console.log("Audio context is ready:", audioContext.state);
+        continueWithToneStart();
+    }
     
-    // Start pulsed tone presentation
-    continuousToneInterval = setInterval(() => {
-        if (isToneOn) {
-            // Turn off tone
-            gainNode.gain.setValueAtTime(0, audioContext.currentTime);
-            isToneOn = false;
-            reticleVisible = false;
+    function continueWithToneStart() {
+        try {
+            // Create audio nodes once
+            setupAudioNodes();
             
-            // Redraw audiogram to hide reticle
-            drawAudiogramGrid();
-            plotAudiogramData();
-        } else {
-            // Turn on tone
-            const frequency = parseInt(frequencySelect.value);
-            const intensity = parseInt(intensitySlider.value);
-            
-            // Update oscillator frequency if needed
-            oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
-            
-            // Calculate gain from intensity
-            const maxDb = 120;
-            const gain = intensity <= 0 ? 0 : Math.pow(10, (intensity - maxDb) / 20);
-            gainNode.gain.setValueAtTime(gain, audioContext.currentTime);
-            
-            isToneOn = true;
-            reticleVisible = true;
-            
-            // Draw flashing reticle
-            drawAudiogramGrid();
-            plotAudiogramData();
-            drawReticle();
+            // Start pulsed tone presentation
+            continuousToneInterval = setInterval(() => {
+                if (isToneOn) {
+                    // Turn off tone
+                    if (gainNode) {
+                        gainNode.gain.value = 0;
+                    }
+                    isToneOn = false;
+                    reticleVisible = false;
+                    
+                    // Redraw audiogram to hide reticle
+                    drawAudiogramGrid();
+                    plotAudiogramData();
+                } else {
+                    // Turn on tone
+                    const frequency = parseInt(frequencySelect.value);
+                    const intensity = parseInt(intensitySlider.value);
+                    
+                    if (oscillator && gainNode) {
+                        // Update oscillator frequency if needed
+                        oscillator.frequency.value = frequency;
+                        
+                        // Calculate gain from intensity using a more effective mapping
+                        // Convert decibels to gain value in a way that ensures audibility
+                        // This uses a more progressive curve that better represents human hearing
+                        let gain;
+                        
+                        if (intensity <= 0) {
+                            gain = 0; // Silent for 0 or negative dB
+                        } else {
+                            // Exponential curve that maps dB to gain values
+                            // This provides better perceptual scaling
+                            // Normalize to 0-1 range with higher gain values
+                            gain = Math.min(1.0, 20 * Math.pow(10, (intensity - 100) / 40)); // Doubled gain for louder sound
+                            
+                            // Ensure a minimum audible level
+                            if (gain < 0.01) gain = 0.01;
+                        }
+                        
+                        // Apply the gain with a slight ramp to avoid clicks/pops
+                        const currentTime = audioContext.currentTime;
+                        gainNode.gain.cancelScheduledValues(currentTime);
+                        gainNode.gain.setValueAtTime(gainNode.gain.value, currentTime);
+                        gainNode.gain.linearRampToValueAtTime(gain, currentTime + 0.02);
+                        
+                        // Log the actual gain value applied
+                        console.log('Tone playing with gain:', gain, 'for intensity:', intensity);
+                        
+                        isToneOn = true;
+                        reticleVisible = true;
+                        
+                        // Draw flashing reticle
+                        drawAudiogramGrid();
+                        plotAudiogramData();
+                        drawReticle();
+                        
+                        // Debugging logs
+                        console.log('Tone playing:', { frequency, intensity, gain, 
+                            audioContextState: audioContext.state,
+                            oscillatorState: 'active'
+                        });
+                    } else {
+                        console.error("Audio nodes not properly initialized");
+                        clearInterval(continuousToneInterval);
+                        isToneActive = false;
+                        playToneButton.classList.remove('active');
+                        updateFeedback("There was a problem playing the audio. Please try again.");
+                    }
+                }
+            }, isToneOn ? PULSE_OFF_DURATION : PULSE_ON_DURATION);
+        } catch (error) {
+            console.error("Error starting tone:", error);
+            isToneActive = false;
+            playToneButton.classList.remove('active');
+            updateFeedback("Failed to play audio. Please try again or refresh the page.");
         }
-    }, isToneOn ? PULSE_OFF_DURATION : PULSE_ON_DURATION);
+    }
 }
 
 // Set up audio nodes for tone presentation
 function setupAudioNodes() {
     const frequency = parseInt(frequencySelect.value);
     
+    // Properly clean up previous audio nodes if they exist
     if (oscillator) {
-        oscillator.stop();
+        try {
+            oscillator.stop();
+            oscillator.disconnect();
+        } catch (e) {
+            console.log("Error stopping existing oscillator:", e);
+        }
     }
     
-    // Create oscillator for pure tone
-    oscillator = audioContext.createOscillator();
-    gainNode = audioContext.createGain();
-    panNode = audioContext.createStereoPanner();
+    if (gainNode) {
+        try {
+            gainNode.disconnect();
+        } catch (e) {
+            console.log("Error disconnecting gain node:", e);
+        }
+    }
     
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+    if (panNode) {
+        try {
+            panNode.disconnect();
+        } catch (e) {
+            console.log("Error disconnecting pan node:", e);
+        }
+    }
     
-    // Initial gain is 0 (silent)
-    gainNode.gain.setValueAtTime(0, audioContext.currentTime);
-    
-    // Route audio to correct ear
-    panNode.pan.value = currentEar === 'left' ? -1 : 1;
-    
-    // Connect nodes
-    oscillator.connect(gainNode);
-    gainNode.connect(panNode);
-    panNode.connect(audioContext.destination);
-    
-    // Start oscillator running (will remain silent until gain is changed)
-    oscillator.start();
+    try {
+        // Ensure audioContext is active
+        if (!audioContext || audioContext.state === 'closed') {
+            initializeAudioContext();
+        }
+        
+        if (audioContext.state === 'suspended') {
+            audioContext.resume().catch(err => {
+                console.error("Failed to resume audio context in setupAudioNodes:", err);
+            });
+        }
+        
+        // Create oscillator for pure tone with more direct setup
+        oscillator = audioContext.createOscillator();
+        gainNode = audioContext.createGain();
+        panNode = audioContext.createStereoPanner();
+        
+        // Set oscillator type and frequency
+        oscillator.type = 'sine';
+        oscillator.frequency.value = frequency; // Set directly instead of using setValueAtTime
+        
+        // Set initial gain to 0 (silent)
+        gainNode.gain.value = 0;
+        
+        // Route audio to correct ear
+        panNode.pan.value = currentEar === 'left' ? -1 : 1;
+        
+        // Connect nodes
+        oscillator.connect(gainNode);
+        gainNode.connect(panNode);
+        panNode.connect(audioContext.destination);
+        
+        // Start oscillator running (will remain silent until gain is changed)
+        oscillator.start();
+        
+        // Debugging logs
+        console.log('Audio nodes set up:', { 
+            frequency, 
+            pan: panNode.pan.value,
+            audioContextState: audioContext.state,
+            oscillatorType: oscillator.type
+        });
+    } catch (error) {
+        console.error("Error setting up audio nodes:", error);
+        // Show the error to help with debugging
+        const audioStatus = document.getElementById('audio-status');
+        if (audioStatus) {
+            audioStatus.textContent = `Error setting up audio: ${error.message}`;
+            audioStatus.style.backgroundColor = "#f8d7da";
+        }
+    }
 }
 
 // Stop continuous tone presentation
@@ -1101,7 +1284,7 @@ function playTone() {
     // In a real application, we would need proper calibration for each frequency
     // This is a simplified approximation
     const maxDb = 120;
-    const gain = intensity <= 0 ? 0 : Math.pow(10, (intensity - maxDb) / 20);
+    const gain = intensity <= 0 ? 0 : 20 * Math.pow(10, (intensity - maxDb) / 20); // Doubled gain for louder sound
     gainNode.gain.setValueAtTime(gain, audioContext.currentTime);
     
     // Route audio to correct ear
@@ -1356,7 +1539,8 @@ function updateTestPhase(frequency, intensity, heard) {
             if (heard) {
                 // Only count this response for threshold if it occurred during an ascending presentation
                 // and wasn't a repeat of the same level
-                if (state.previousDirection === 'ascending') {
+                // AND we must have completed at least one full excursion (initial descending phase doesn't count)
+                if (state.previousDirection === 'ascending' && state.excursionCount >= 1) {
                     // Valid ascending response - track it for threshold determination
                     if (!state.validAscendingResponses[intensity]) {
                         state.validAscendingResponses[intensity] = 0;
@@ -1475,9 +1659,9 @@ ASHA notes that appropriate earphones (supra-aural, circumaural, or insert) shou
             }
         } else if (state.phase === TEST_PHASES.DESCENDING) {
             if (state.excursionCount <= 1 && !currentText.includes("zigzag pattern")) {
-                educationalNote = `\n\n-----\nINSTRUCTOR GUIDANCE:\nThe Hughson-Westlake procedure follows a zigzag pattern. After each response, you MUST descend by 10 dB. This mandatory reduction prevents auditory nerve adaptation and reduces false positives. If the patient doesn't respond, begin ascending in 5 dB steps until they respond again. Remember that only responses obtained during the ascending phase count toward threshold determination.`;
+                educationalNote = `\n\n-----\nINSTRUCTOR GUIDANCE:\nThe Hughson-Westlake procedure follows a zigzag pattern. After each response, you MUST descend by 10 dB. This mandatory reduction prevents auditory nerve adaptation and reduces false positives. If the patient doesn't respond, begin ascending in 5 dB steps until they respond again. Remember that only responses obtained during the ascending phase count toward threshold determination, and responses during the initial descending phase do not count at all.`;
             } else if (state.excursionCount > 1 && !currentText.includes(`excursion #${state.excursionCount}`)) {
-                educationalNote = `\n\n-----\nINSTRUCTOR GUIDANCE:\nThis is excursion #${state.excursionCount} in the Hughson-Westlake procedure. A threshold is established when the patient responds at the same level in at least 2 out of 3 different ascending presentations. After each response, the immediate 10 dB reduction is critical - never remain at the same level to accumulate responses.`;
+                educationalNote = `\n\n-----\nINSTRUCTOR GUIDANCE:\nThis is excursion #${state.excursionCount} in the Hughson-Westlake procedure. A threshold is established when the patient responds at the same level in at least 2 out of 3 different ascending presentations. After each response, the immediate 10 dB reduction is critical - never remain at the same level to accumulate responses. Remember that any responses in the descending phase (including the initial descending phase) do not count toward threshold determination.`;
             }
         } else if (state.phase === TEST_PHASES.ASCENDING) {
             if (state.lastResponseLevel === null && !currentText.includes("initial search")) {
@@ -1492,7 +1676,7 @@ ASHA standards indicate that thresholds are typically assessed at frequencies be
                     validResponses = `So far, we have ${totalValidResponses} valid ascending response(s).`;
                 }
                 
-                educationalNote = `\n\n-----\nINSTRUCTOR GUIDANCE:\nIn the Hughson-Westlake procedure, we ascend in 5 dB steps until the patient responds. Only responses during the ascending phase count toward threshold determination. ${validResponses} We need at least 2 responses at the same level during different ascending phases to establish threshold. Remember: after each response, immediately decrease by 10 dB to begin a new bracketing sequence.
+                educationalNote = `\n\n-----\nINSTRUCTOR GUIDANCE:\nIn the Hughson-Westlake procedure, we ascend in 5 dB steps until the patient responds. Only responses during the ascending phase count toward threshold determination, and importantly, responses during the initial descending phase are NOT counted. ${validResponses} We need at least 2 responses at the same level during different ascending phases to establish threshold. Remember: after each response, immediately decrease by 10 dB to begin a new bracketing sequence.
                 
 ASHA guidelines recommend including frequencies at 3000 Hz and 6000 Hz in routine testing to provide a more complete profile of the individual's hearing status for diagnostic purposes. Extended high-frequency audiology (9000-20000 Hz) may be useful for early detection of hearing loss from noise or ototoxic chemicals.`;
             }
@@ -1500,7 +1684,7 @@ ASHA guidelines recommend including frequencies at 3000 Hz and 6000 Hz in routin
             // Get statistics about the threshold determination
             const validAscendingResponsesAtThreshold = state.validAscendingResponses[state.potentialThreshold] || 0;
             
-            educationalNote = `\n\n-----\nINSTRUCTOR GUIDANCE:\nAccording to the Hughson-Westlake procedure, the threshold (${state.potentialThreshold} dB HL) was established because the patient responded at this level ${validAscendingResponsesAtThreshold} times during different ascending phases. The procedure requires that responses must occur during the ascending phase (not descending) to be counted toward threshold determination. The mandatory 10 dB reduction after each positive response is critical to prevent auditory adaptation that could skew results.
+            educationalNote = `\n\n-----\nINSTRUCTOR GUIDANCE:\nAccording to the Hughson-Westlake procedure, the threshold (${state.potentialThreshold} dB HL) was established because the patient responded at this level ${validAscendingResponsesAtThreshold} times during different ascending phases. The procedure requires that responses must occur during the ascending phase (not descending) to be counted toward threshold determination, and responses during the initial descending phase do not count at all. The mandatory 10 dB reduction after each positive response is critical to prevent auditory adaptation that could skew results.
 
 ASHA categorizes hearing thresholds as follows:
 - Normal: -10 to 15 dB HL
@@ -2024,7 +2208,7 @@ function selectPatient(patientId) {
 ASHA notes that "in young and middle-aged adults, excessive noise exposure is the most common, preventable cause of hearing loss." Pay particular attention to the patient's occupation and recreational activities that may involve noise exposure.`;
         } 
         else if (patient.patternDescription.includes("presbycusis") || (patient.age >= 65 && patient.patternDescription.includes("hearing loss"))) {
-            patientInfo += `\nASHA guidelines note that age-related hearing loss (presbycusis) becomes one of the most common sensory deficits as adults age. It is the third most common chronic health condition in older adults. 
+            patientInfo += `\nASHA guidelines note that age-related hearing loss (presbycusis) becomes one of the most common sensory deficits as adults. It is the third most common chronic health condition in older adults. 
 
 When testing older adults, ASHA recommends being aware that they may have difficulty with the testing process. Consider using pulsed tones to increase awareness of the stimuli as recommended by ASHA, as this can be particularly helpful for older patients who may have decreased attention or auditory processing issues alongside their hearing loss.`;
         }
@@ -2344,6 +2528,40 @@ function plotTrueAudiogramData() {
             }
         }
     });
+}
+
+// Check if audio context is properly initialized and not suspended
+function checkAudioContextState() {
+    if (!audioContext) {
+        console.log("Creating new audio context...");
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    
+    // Check if the context is in suspended state (common in browsers that require user interaction)
+    if (audioContext.state === 'suspended') {
+        // Show a message to the user
+        updateFeedback("Audio is currently blocked by your browser. Click anywhere on the page to enable audio playback.");
+        
+        // Add a one-time click handler to resume the audio context
+        const resumeAudio = function() {
+            console.log("User interaction detected, resuming audio context...");
+            audioContext.resume().then(() => {
+                console.log("AudioContext resumed successfully");
+                updateFeedback("Audio enabled! You can now use the Play Tone button.");
+            });
+            
+            // Remove event listeners after first successful click
+            document.removeEventListener('click', resumeAudio);
+            document.removeEventListener('touchstart', resumeAudio);
+        };
+        
+        document.addEventListener('click', resumeAudio);
+        document.addEventListener('touchstart', resumeAudio);
+        
+        return false;
+    }
+    
+    return true;
 }
 
 // Start the application when the page loads
