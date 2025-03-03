@@ -1,113 +1,105 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pure Tone Audiometry Training</title>
-    <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-    <div class="container">
-        <header>
-            <h1>Pure Tone Audiometry Training</h1>
-            <p>Learn how to conduct hearing tests according to best practices</p>
-        </header>
+<!DOCTYPE html> <html lang="en"> <head> <meta charset="UTF-8"> <meta name="viewport" content="width=device-width, initial-scale=1.0"> <title>Pure Tone Audiometry Training</title> <link rel="stylesheet" href="styles.css"> </head> <body> <div class="container"> <header> <h1>Pure Tone Audiometry Training</h1> <p>Learn how to conduct hearing tests according to best practices</p> </header>
 
-        <div class="game-container">
-            <div class="sidebar">
-                <div class="controls">
-                    <h2>Test Controls</h2>
-                    <div class="frequency-control">
-                        <label for="frequency-select">Frequency (Hz):</label>
-                        <select id="frequency-select">
-                            <option value="250">250 Hz</option>
-                            <option value="500">500 Hz</option>
-                            <option value="1000">1000 Hz</option>
-                            <option value="1500">1500 Hz</option>
-                            <option value="2000">2000 Hz</option>
-                            <option value="3000">3000 Hz</option>
-                            <option value="4000">4000 Hz</option>
-                            <option value="6000">6000 Hz</option>
-                            <option value="8000">8000 Hz</option>
-                        </select>
-                    </div>
-                    <div class="intensity-control">
-                        <label for="intensity-slider">Intensity (dB HL):</label>
-                        <input type="range" id="intensity-slider" min="-10" max="120" step="5" value="70">
-                        <span id="intensity-value">70 dB HL</span>
-                    </div>
-                    <div class="ear-control">
-                        <label>Test Ear:</label>
-                        <div class="ear-buttons">
-                            <button id="left-ear" class="ear-button active">Left</button>
-                            <button id="right-ear" class="ear-button">Right</button>
+    <div class="main-content">
+        <div class="left-panel">
+            <div class="game-container">
+                <div class="sidebar">
+                    <div class="controls">
+                        <h2>Test Controls</h2>
+                        <div class="frequency-control">
+                            <label for="frequency-select">Frequency (Hz):</label>
+                            <select id="frequency-select">
+                                <option value="250">250 Hz</option>
+                                <option value="500">500 Hz</option>
+                                <option value="1000">1000 Hz</option>
+                                <option value="1500">1500 Hz</option>
+                                <option value="2000">2000 Hz</option>
+                                <option value="3000">3000 Hz</option>
+                                <option value="4000">4000 Hz</option>
+                                <option value="6000">6000 Hz</option>
+                                <option value="8000">8000 Hz</option>
+                            </select>
                         </div>
+                        <div class="intensity-control">
+                            <label for="intensity-slider">Intensity (dB HL):</label>
+                            <input type="range" id="intensity-slider" min="-10" max="120" step="5" value="70">
+                            <span id="intensity-value">70 dB HL</span>
+                        </div>
+                        <div class="ear-control">
+                            <label>Test Ear:</label>
+                            <div class="ear-buttons">
+                                <button id="left-ear" class="ear-button active">Left</button>
+                                <button id="right-ear" class="ear-button">Right</button>
+                            </div>
+                        </div>
+                        <button id="play-tone" class="primary-button">Play Tone</button>
+                        <button id="toggle-keyboard" class="secondary-button">Keyboard Controls: On</button>
                     </div>
-                    <button id="play-tone" class="primary-button">Play Tone</button>
-                    <button id="toggle-keyboard" class="secondary-button">Keyboard Controls: On</button>
-                </div>
 
-                <div class="test-protocol">
-                    <h2>Test Protocol</h2>
-                    <div class="protocol-steps">
-                        <ol>
-                            <li>Start with 1000 Hz</li>
-                            <li>Begin at 30 dB HL</li>
-                            <li>If patient responds, decrease by 10 dB until no response</li>
-                            <li>Increase by 5 dB until response (threshold)</li>
-                            <li>Test 1500, 2000, 3000, 4000, 6000, 8000, then 500, 250 Hz</li>
-                            <li>Test opposite ear</li>
-                        </ol>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="main-area">
-                <div class="virtual-patient">
-                    <h2>Virtual Patient</h2>
-                    <div class="patient-selection">
-                        <label for="patient-select">Select Patient:</label>
-                        <select id="patient-select">
-                            <!-- Options will be populated by JavaScript -->
-                        </select>
-                    </div>
-                    <div class="patient-container">
-                        <div class="patient-image">
-                            <div class="patient-head"></div>
-                            <div class="patient-indication" id="patient-heard">Heard!</div>
-                        </div>
-                        <div class="patient-info">
-                            <p>Name: <span id="patient-name">John Smith</span></p>
-                            <p>Age: <span id="patient-age">45</span></p>
-                            <p>Occupation: <span id="patient-occupation">Construction Worker</span></p>
-                            <p>Case Notes: <span id="patient-notes">Complains of difficulty hearing in noisy environments</span></p>
+                    <div class="test-protocol">
+                        <h2>Test Protocol</h2>
+                        <div class="protocol-steps">
+                            <ol>
+                                <li>Start with 1000 Hz</li>
+                                <li>Begin at 30 dB HL</li>
+                                <li>If patient responds, decrease by 10 dB until no response</li>
+                                <li>Increase by 5 dB until response (threshold)</li>
+                                <li>Test 1500, 2000, 3000, 4000, 6000, 8000, then 500, 250 Hz</li>
+                                <li>Test opposite ear</li>
+                            </ol>
                         </div>
                     </div>
                 </div>
                 
-                <div class="audiogram">
-                    <h2>Audiogram</h2>
-                    <div class="audiogram-container">
-                        <canvas id="audiogram-canvas" width="500" height="400"></canvas>
+                <div class="main-area">
+                    <div class="virtual-patient">
+                        <h2>Virtual Patient</h2>
+                        <div class="patient-selection">
+                            <label for="patient-select">Select Patient:</label>
+                            <select id="patient-select">
+                                <!-- Options will be populated by JavaScript -->
+                            </select>
+                        </div>
+                        <div class="patient-container">
+                            <div class="patient-image">
+                                <div class="patient-head"></div>
+                                <div class="patient-indication" id="patient-heard">Heard!</div>
+                            </div>
+                            <div class="patient-info">
+                                <p>Name: <span id="patient-name">John Smith</span></p>
+                                <p>Age: <span id="patient-age">45</span></p>
+                                <p>Occupation: <span id="patient-occupation">Construction Worker</span></p>
+                                <p>Case Notes: <span id="patient-notes">Complains of difficulty hearing in noisy environments</span></p>
+                            </div>
+                        </div>
                     </div>
-                    <div class="audiogram-controls">
-                        <button id="mark-threshold" class="primary-button">Mark Threshold</button>
-                        <button id="clear-audiogram" class="secondary-button">Clear</button>
+                    
+                    <div class="audiogram">
+                        <h2>Audiogram</h2>
+                        <div class="audiogram-container">
+                            <canvas id="audiogram-canvas" width="500" height="400"></canvas>
+                        </div>
+                        <div class="audiogram-controls">
+                            <button id="mark-threshold" class="primary-button">Mark Threshold</button>
+                            <button id="clear-audiogram" class="secondary-button">Clear</button>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <div class="feedback-panel">
-            <h2>Instructor Feedback</h2>
-            <div id="feedback-message">
-                Welcome to Pure Tone Audiometry Training. Follow the protocol to test your virtual patient's hearing thresholds.
+        <div class="right-panel">
+            <div class="feedback-panel">
+                <h2>Instructor Feedback</h2>
+                <div id="feedback-message">
+                    Welcome to Pure Tone Audiometry Training. Follow the protocol to test your virtual patient's hearing thresholds.
+                </div>
+                <div id="educational-note" class="educational-note"></div>
+                <div id="audio-status" class="audio-status"></div>
             </div>
-            <div id="educational-note" class="educational-note"></div>
-            <div id="audio-status" class="audio-status"></div>
         </div>
     </div>
+</div>
 
-    <script src="script.js"></script>
-</body>
-</html>
+<script src="script.js"></script>
+</body> </html>
