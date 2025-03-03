@@ -866,9 +866,11 @@ function initializeTestState(frequency) {
     console.log(`Initializing test state for ${frequency} Hz in ${currentEar} ear`);
     testState[currentEar][frequency] = {
         phase: TEST_PHASES.INITIAL,
+        previousPhase: null,         // Added to track phase changes and prevent duplicate feedback
         lastResponse: null,
         lastIntensity: null,
         potentialThreshold: null,
+        previousPotentialThreshold: null, // Added to track threshold changes
         responseCount: 0,
         noResponseLevel: null,
         lastNoResponseLevel: null,
@@ -898,8 +900,6 @@ function initializeTestState(frequency) {
     
     // Initialize response history array for this frequency
     responseHistory[currentEar][frequency] = [];
-    
-    return testState[currentEar][frequency]; // Return the initialized state for convenience
 }
 
 // Start continuous tone presentation (pulsed/beeping)
@@ -1282,20 +1282,25 @@ function updateTestPhase(frequency, intensity, heard) {
     const state = testState[currentEar][frequency];
     const currentPhase = state.phase;
     
+    // Store the previous phase before we update it
+    const previousPhase = state.phase;
+    const previousThreshold = state.potentialThreshold;
+    
     switch (currentPhase) {
         case TEST_PHASES.INITIAL:
-    if (heard) {
+            if (heard) {
                 // If heard on first presentation, move to descending phase
                 state.phase = TEST_PHASES.DESCENDING;
                 state.lastResponseLevel = intensity;
                 state.previousDirection = 'descending'; // Set direction for next iteration
                 
                 // Begin first excursion - go down by 10dB
+                // CRITICAL: This 10 dB reduction is mandatory in Hughson-Westlake after any positive response
                 const nextIntensity = intensity - 10;
                 intensitySlider.value = nextIntensity;
                 intensityValue.textContent = `${nextIntensity} dB HL`;
                 updateFeedback(`Patient heard ${frequency} Hz at ${intensity} dB HL. NEXT STEP: Following the Hughson-Westlake procedure, decrease by 10 dB to ${nextIntensity} dB HL and present again.`);
-    } else {
+            } else {
                 // If not heard on first presentation, increase by 10dB for efficiency
                 // during the initial search
                 const nextIntensity = intensity + 10;
@@ -1319,6 +1324,8 @@ function updateTestPhase(frequency, intensity, heard) {
                 state.previousDirection = 'descending'; // We are descending
                 
                 // Continue descending in 10 dB steps
+                // CRITICAL: This 10 dB reduction is mandatory in Hughson-Westlake after any positive response
+                // It prevents auditory adaptation and reduces false positives
                 const nextIntensity = intensity - 10;
                 state.excursionCount++;
                 intensitySlider.value = nextIntensity;
@@ -1370,6 +1377,8 @@ function updateTestPhase(frequency, intensity, heard) {
                 state.lastResponseLevel = intensity;
                 
                 // Start a new excursion - go down by 10dB again
+                // CRITICAL: This 10 dB reduction is mandatory in Hughson-Westlake after any positive response
+                // Never stay at the same level to accumulate more responses - always decrease by 10 dB
                 const nextIntensity = intensity - 10;
                 state.phase = TEST_PHASES.DESCENDING;
                 state.excursionCount++;
@@ -1405,7 +1414,7 @@ function updateTestPhase(frequency, intensity, heard) {
             
         case TEST_PHASES.COMPLETE:
             // Already complete, but patient is still being tested
-    if (heard) {
+            if (heard) {
                 updateFeedback(`Patient heard ${frequency} Hz at ${intensity} dB HL. A threshold (${state.potentialThreshold} dB HL) has already been established using the Hughson-Westlake procedure. NEXT STEP: Mark the threshold and continue to the next frequency.`);
             } else {
                 updateFeedback(`Patient did not hear ${frequency} Hz at ${intensity} dB HL. A threshold (${state.potentialThreshold} dB HL) has already been established using the Hughson-Westlake procedure. NEXT STEP: Mark the threshold and continue to the next frequency.`);
@@ -1413,8 +1422,19 @@ function updateTestPhase(frequency, intensity, heard) {
             break;
     }
     
-    // Educational feedback about the Hughson-Westlake procedure
-    provideHughsonWestlakeEducationalFeedback(frequency, state);
+    // Only provide educational feedback if we're transitioning phases or in a significant state
+    // and wait a short delay to avoid UI clutter
+    if (previousPhase !== state.phase || 
+        state.excursionCount === 1 || 
+        (previousThreshold !== state.potentialThreshold && state.potentialThreshold !== null) ||
+        state.phase === TEST_PHASES.COMPLETE) {
+        
+        // Small delay to let the user see the primary feedback first
+        setTimeout(() => {
+            // Educational feedback about the Hughson-Westlake procedure
+            provideHughsonWestlakeEducationalFeedback(frequency, state);
+        }, 200);
+    }
 }
 
 // Provide educational feedback about the Hughson-Westlake procedure
@@ -1427,14 +1447,13 @@ function provideHughsonWestlakeEducationalFeedback(frequencyOrPhase, state) {
     if (typeof frequencyOrPhase === 'string' && !state) {
         const phase = frequencyOrPhase;
         
-        if (phase === 'INITIAL') {
-            educationalNote = `\n\nNote: For pure tone audiometry, follow the Hughson-Westlake procedure. Start at 1000 Hz and 30 dB HL for each ear, then follow the zigzag pattern of testing. After obtaining a response, go down by 10 dB and then up by 5 dB until threshold is established.`;
+        // Only add initial guidance if there's no existing feedback or it doesn't already contain similar guidance
+        if (phase === 'INITIAL' && !currentText.includes("INSTRUCTOR GUIDANCE") && !currentText.includes("Hughson-Westlake")) {
+            educationalNote = `\n\n-----\nINSTRUCTOR GUIDANCE:\nFor pure tone audiometry, follow the Hughson-Westlake procedure. Start at 1000 Hz and 30 dB HL for each ear, then follow the zigzag pattern of testing. After obtaining a response, you MUST decrease by 10 dB before ascending in 5 dB steps. This mandatory 10 dB reduction after each response prevents auditory adaptation and reduces false positives due to patient anticipation.
+
+According to ASHA (American Speech-Language-Hearing Association), pure-tone audiometry is a behavioral test of hearing sensitivity where thresholds are measured as the lowest intensity in decibels at which a certain frequency is perceived 50% of the time. Results are plotted on an audiogram, with sound frequency on the horizontal axis and sound intensity on the vertical axis.`;
             feedbackElement.textContent = `${currentText}${educationalNote}`;
-            return;
         }
-        
-        // Add to existing feedback
-        feedbackElement.textContent = `${currentText}${educationalNote}`;
         return;
     }
     
@@ -1447,21 +1466,25 @@ function provideHughsonWestlakeEducationalFeedback(frequencyOrPhase, state) {
         state.phase === TEST_PHASES.COMPLETE || 
         state.phase === TEST_PHASES.INITIAL) {
         
-        // Create an educational note about the procedure
+        // Create an educational note about the procedure - each phase gets exactly one note
         if (state.phase === TEST_PHASES.INITIAL) {
-            if (state.lastResponseLevel === null) {
-                educationalNote = `\n\nNote: For efficiency during initial testing, we use 10 dB steps upward until the patient responds. Once they respond, we'll switch to the standard Hughson-Westlake procedure.`;
+            if (state.lastResponseLevel === null && !currentText.includes("INSTRUCTOR GUIDANCE")) {
+                educationalNote = `\n\n-----\nINSTRUCTOR GUIDANCE:\nFor efficiency during initial testing, we use 10 dB steps upward until the patient responds. Once they respond, we'll switch to the standard Hughson-Westlake procedure, which requires an immediate 10 dB reduction after each positive response.
+                
+ASHA notes that appropriate earphones (supra-aural, circumaural, or insert) should be selected based on the testing situation and should match the audiometer. Pulsed tones have been shown to increase a participant's awareness of the stimuli.`;
             }
         } else if (state.phase === TEST_PHASES.DESCENDING) {
-            if (state.excursionCount <= 1) {
-                educationalNote = `\n\nNote: The Hughson-Westlake procedure follows a zigzag pattern. After each response, we descend by 10 dB. If the patient doesn't respond, we begin ascending in 5 dB steps until they respond again. Only responses obtained during the ascending phase count toward threshold determination.`;
-            } else {
-                educationalNote = `\n\nNote: This is excursion #${state.excursionCount} in the Hughson-Westlake procedure. A threshold is established when the patient responds at the same level in at least 2 out of 3 different ascending presentations.`;
+            if (state.excursionCount <= 1 && !currentText.includes("zigzag pattern")) {
+                educationalNote = `\n\n-----\nINSTRUCTOR GUIDANCE:\nThe Hughson-Westlake procedure follows a zigzag pattern. After each response, you MUST descend by 10 dB. This mandatory reduction prevents auditory nerve adaptation and reduces false positives. If the patient doesn't respond, begin ascending in 5 dB steps until they respond again. Remember that only responses obtained during the ascending phase count toward threshold determination.`;
+            } else if (state.excursionCount > 1 && !currentText.includes(`excursion #${state.excursionCount}`)) {
+                educationalNote = `\n\n-----\nINSTRUCTOR GUIDANCE:\nThis is excursion #${state.excursionCount} in the Hughson-Westlake procedure. A threshold is established when the patient responds at the same level in at least 2 out of 3 different ascending presentations. After each response, the immediate 10 dB reduction is critical - never remain at the same level to accumulate responses.`;
             }
         } else if (state.phase === TEST_PHASES.ASCENDING) {
-            if (state.lastResponseLevel === null) {
-                educationalNote = `\n\nNote: We haven't established a response yet at this frequency, so we're using more efficient 10 dB steps during the initial search.`;
-            } else {
+            if (state.lastResponseLevel === null && !currentText.includes("initial search")) {
+                educationalNote = `\n\n-----\nINSTRUCTOR GUIDANCE:\nWe haven't established a response yet at this frequency, so we're using more efficient 10 dB steps during the initial search.
+                
+ASHA standards indicate that thresholds are typically assessed at frequencies between 250 Hz and 8000 Hz, except when low-frequency hearing loss exists or is suspected, in which case 125 Hz is also measured. When differences of 20 dB or more occur between adjacent octave frequencies, additional frequencies may be tested.`;
+            } else if (!currentText.includes("ascend in 5 dB steps")) {
                 let validResponses = '';
                 if (state.validAscendingResponses) {
                     // Count total valid responses identified so far
@@ -1469,13 +1492,24 @@ function provideHughsonWestlakeEducationalFeedback(frequencyOrPhase, state) {
                     validResponses = `So far, we have ${totalValidResponses} valid ascending response(s).`;
                 }
                 
-                educationalNote = `\n\nNote: In the Hughson-Westlake procedure, we ascend in 5 dB steps until the patient responds. Only responses during the ascending phase count toward threshold determination. ${validResponses} We need at least 2 responses at the same level during different ascending phases to establish threshold.`;
+                educationalNote = `\n\n-----\nINSTRUCTOR GUIDANCE:\nIn the Hughson-Westlake procedure, we ascend in 5 dB steps until the patient responds. Only responses during the ascending phase count toward threshold determination. ${validResponses} We need at least 2 responses at the same level during different ascending phases to establish threshold. Remember: after each response, immediately decrease by 10 dB to begin a new bracketing sequence.
+                
+ASHA guidelines recommend including frequencies at 3000 Hz and 6000 Hz in routine testing to provide a more complete profile of the individual's hearing status for diagnostic purposes. Extended high-frequency audiology (9000-20000 Hz) may be useful for early detection of hearing loss from noise or ototoxic chemicals.`;
             }
-        } else if (state.phase === TEST_PHASES.COMPLETE) {
+        } else if (state.phase === TEST_PHASES.COMPLETE && !currentText.includes(`threshold (${state.potentialThreshold} dB HL) was established`)) {
             // Get statistics about the threshold determination
             const validAscendingResponsesAtThreshold = state.validAscendingResponses[state.potentialThreshold] || 0;
             
-            educationalNote = `\n\nNote: According to the Hughson-Westlake procedure, the threshold (${state.potentialThreshold} dB HL) was established because the patient responded at this level ${validAscendingResponsesAtThreshold} times during different ascending phases. The procedure requires that responses must occur during the ascending phase (not descending) to be counted toward threshold determination.`;
+            educationalNote = `\n\n-----\nINSTRUCTOR GUIDANCE:\nAccording to the Hughson-Westlake procedure, the threshold (${state.potentialThreshold} dB HL) was established because the patient responded at this level ${validAscendingResponsesAtThreshold} times during different ascending phases. The procedure requires that responses must occur during the ascending phase (not descending) to be counted toward threshold determination. The mandatory 10 dB reduction after each positive response is critical to prevent auditory adaptation that could skew results.
+
+ASHA categorizes hearing thresholds as follows:
+- Normal: -10 to 15 dB HL
+- Slight: 16 to 25 dB HL
+- Mild: 26 to 40 dB HL
+- Moderate: 41 to 55 dB HL
+- Moderately severe: 56 to 70 dB HL
+- Severe: 71 to 90 dB HL
+- Profound: 91+ dB HL`;
         }
         
         try {
@@ -1488,41 +1522,59 @@ function provideHughsonWestlakeEducationalFeedback(frequencyOrPhase, state) {
                 const otherEarProgress = getEarTestingProgress(otherEar);
                 
                 // Only add protocol guidance if we have some thresholds already or are near completion
-                if (earProgress.completedFrequencies && (earProgress.completedFrequencies.length > 0 || state.phase === TEST_PHASES.COMPLETE)) {
-                    // Add protocol guidance
-                    educationalNote += `\n\nClinical Protocol: In audiometry, we typically test frequencies in a specific order (1000, 2000, 3000, 4000, 6000, 8000, 1500, 500, 250 Hz). Complete all frequencies in one ear before switching to the other ear, unless there is a specific clinical reason to do otherwise.`;
+                // and only if we haven't already added clinical protocol info (avoid duplication)
+                if (earProgress.completedFrequencies && 
+                    (earProgress.completedFrequencies.length > 0 || state.phase === TEST_PHASES.COMPLETE) && 
+                    !currentText.includes("CLINICAL PROTOCOL:")) {
                     
-                    // Add emphasis on testing all frequencies
-                    educationalNote += ` It is important to test all nine frequencies for a complete audiogram, including the often-critical intermediate frequencies (1500, 3000, 6000 Hz) that help identify specific hearing loss patterns.`;
-                    
-                    // If we're getting close to completing the current ear, add reminder about switching ears
-                    if (earProgress.completedFrequencies.length >= 5 && earProgress.completedFrequencies.length < 9) {
-                        const remainingFreqs = 9 - earProgress.completedFrequencies.length;
-                        educationalNote += ` You have ${remainingFreqs} more frequency/frequencies to test in the ${currentEar} ear before switching to the ${otherEar} ear.`;
+                    // Add protocol guidance with clear separation
+                    if (educationalNote) {
+                        educationalNote += `\n\n-----\nCLINICAL PROTOCOL:\nIn audiometry, test frequencies in this order: 1000, 1500, 2000, 3000, 4000, 6000, 8000, 500, 250 Hz. Complete all frequencies in one ear before switching to the other ear.
+                        
+ASHA suggests that when differences of 20 dB or more occur between the threshold values at adjacent octave frequencies, additional frequencies may be tested. For challenging testing situations, ASHA recommends modifications such as using pulsed signals for patients with tinnitus, starting with low-frequency pure tones for severe hearing loss, and considering different approaches for patients with claustrophobia, collapsed ear canals, or physical limitations.`;
+                    } else {
+                        educationalNote = `\n\n-----\nCLINICAL PROTOCOL:\nIn audiometry, test frequencies in this order: 1000, 1500, 2000, 3000, 4000, 6000, 8000, 500, 250 Hz. Complete all frequencies in one ear before switching to the other ear.
+                        
+ASHA suggests that when differences of 20 dB or more occur between the threshold values at adjacent octave frequencies, additional frequencies may be tested. For challenging testing situations, ASHA recommends modifications such as using pulsed signals for patients with tinnitus, starting with low-frequency pure tones for severe hearing loss, and considering different approaches for patients with claustrophobia, collapsed ear canals, or physical limitations.`;
                     }
                     
-                    // If the current ear is complete, remind to switch
-                    if (earProgress.completedFrequencies.length >= 9 && 
+                    // Add specific guidance based on progress
+                    if (earProgress.completedFrequencies.length >= 5 && earProgress.completedFrequencies.length < 9) {
+                        const remainingFreqs = 9 - earProgress.completedFrequencies.length;
+                        educationalNote += `\nYou have ${remainingFreqs} more frequency/frequencies to test in the ${currentEar} ear before switching to the ${otherEar} ear.`;
+                    } else if (earProgress.completedFrequencies.length >= 9 && 
                         otherEarProgress.completedFrequencies && 
                         otherEarProgress.completedFrequencies.length < 9) {
-                        educationalNote += ` You have completed all frequencies in the ${currentEar} ear. Remember to switch to the ${otherEar} ear to complete the audiogram.`;
+                        educationalNote += `\nYou have completed all frequencies in the ${currentEar} ear. Remember to switch to the ${otherEar} ear to complete the audiogram.`;
                     }
                 }
             }
         } catch (error) {
             console.error("Error in ear testing progress feedback:", error);
-            // Add basic guidance without ear-specific details
-            educationalNote += `\n\nClinical Protocol: In audiometry, we typically test frequencies in a specific order (1000, 2000, 3000, 4000, 6000, 8000, 1500, 500, 250 Hz). Complete all frequencies in one ear before switching to the other ear.`;
+            // Only add basic guidance if not already present
+            if (!currentText.includes("CLINICAL PROTOCOL:")) {
+                if (educationalNote) {
+                    educationalNote += `\n\n-----\nCLINICAL PROTOCOL:\nIn audiometry, test frequencies in this order: 1000, 1500, 2000, 3000, 4000, 6000, 8000, 500, 250 Hz. Complete all frequencies in one ear before switching to the other ear.
+                    
+ASHA suggests that when differences of 20 dB or more occur between the threshold values at adjacent octave frequencies, additional frequencies may be tested. For challenging testing situations, ASHA recommends modifications such as using pulsed signals for patients with tinnitus, starting with low-frequency pure tones for severe hearing loss, and considering different approaches for patients with claustrophobia, collapsed ear canals, or physical limitations.`;
+                } else {
+                    educationalNote = `\n\n-----\nCLINICAL PROTOCOL:\nIn audiometry, test frequencies in this order: 1000, 1500, 2000, 3000, 4000, 6000, 8000, 500, 250 Hz. Complete all frequencies in one ear before switching to the other ear.
+                    
+ASHA suggests that when differences of 20 dB or more occur between the threshold values at adjacent octave frequencies, additional frequencies may be tested. For challenging testing situations, ASHA recommends modifications such as using pulsed signals for patients with tinnitus, starting with low-frequency pure tones for severe hearing loss, and considering different approaches for patients with claustrophobia, collapsed ear canals, or physical limitations.`;
+                }
+            }
         }
         
-        // Add to existing feedback
-        feedbackElement.textContent = `${currentText}${educationalNote}`;
+        // Only add educational note if it's not empty and not already in the feedback
+        if (educationalNote && !currentText.includes(educationalNote.trim())) {
+            feedbackElement.textContent = `${currentText}${educationalNote}`;
+        }
     }
 }
 
 // Get next frequency according to protocol
 function getNextFrequency(currentFrequency) {
-    const frequencies = [1000, 2000, 3000, 4000, 6000, 8000, 1500, 500, 250];
+    const frequencies = [1000, 1500, 2000, 3000, 4000, 6000, 8000, 500, 250];
     const currentIndex = frequencies.indexOf(currentFrequency);
     
     if (currentIndex === -1 || currentIndex === frequencies.length - 1) {
@@ -1633,7 +1685,7 @@ function provideEarTestingProgressFeedback(ear) {
         
         if (remainingCount > 0) {
             // List the remaining frequencies according to protocol order
-            const protocolOrder = [1000, 2000, 3000, 4000, 6000, 8000, 1500, 500, 250];
+            const protocolOrder = [1000, 1500, 2000, 3000, 4000, 6000, 8000, 500, 250];
             const remainingFreqs = protocolOrder
                 .filter(freq => !progress.completedFrequencies.includes(freq))
                 .map(freq => `${freq} Hz`)
@@ -1824,7 +1876,15 @@ function plotAudiogramData() {
 
 // Update feedback message
 function updateFeedback(message) {
+    // Clear any previous education notes before setting new feedback
+    // This prevents accumulation of duplicated notes
     feedbackMessage.textContent = message;
+    
+    // Adjust the style to make feedback more readable
+    feedbackMessage.style.whiteSpace = "pre-wrap"; // Preserve line breaks
+    
+    // Log for debugging
+    console.log("Feedback updated: " + message.substring(0, 50) + (message.length > 50 ? "..." : ""));
 }
 
 // Get progress of testing for a specific ear
@@ -1874,7 +1934,7 @@ function getEarTestingProgress(ear) {
     });
     
     // Sort frequencies according to protocol order
-    const protocolOrder = [1000, 2000, 3000, 4000, 6000, 8000, 1500, 500, 250];
+    const protocolOrder = [1000, 1500, 2000, 3000, 4000, 6000, 8000, 500, 250];
     
     progress.testedFrequencies.sort((a, b) => protocolOrder.indexOf(a) - protocolOrder.indexOf(b));
     progress.completedFrequencies.sort((a, b) => protocolOrder.indexOf(a) - protocolOrder.indexOf(b));
@@ -1886,7 +1946,7 @@ function getEarTestingProgress(ear) {
 // Get the next frequency to test according to protocol
 function getNextFrequencyToTest(ear) {
     const progress = getEarTestingProgress(ear);
-    const protocolOrder = [1000, 2000, 3000, 4000, 6000, 8000, 1500, 500, 250];
+    const protocolOrder = [1000, 1500, 2000, 3000, 4000, 6000, 8000, 500, 250];
     
     // If there are incomplete frequencies, suggest the first one
     if (progress.incompleteFrequencies.length > 0) {
@@ -1955,6 +2015,35 @@ function selectPatient(patientId) {
             patientInfo += ` Note the patient's specific complaints which may correlate with the audiogram results.`;
         }
         
+        // Add ASHA-specific guidance based on patient condition
+        patientInfo += `\n\n-----\nASHA CLINICAL RECOMMENDATIONS:`;
+        
+        if (patient.patternDescription.includes("noise-induced")) {
+            patientInfo += `\nAccording to ASHA, when testing patients with suspected noise-induced hearing loss, include frequencies at 3000 Hz and 6000 Hz in routine testing to provide a more complete profile of the individual's hearing status. This is especially important as noise exposure typically affects the 3000-6000 Hz range first, creating a characteristic "notch" in the audiogram. 
+            
+ASHA notes that "in young and middle-aged adults, excessive noise exposure is the most common, preventable cause of hearing loss." Pay particular attention to the patient's occupation and recreational activities that may involve noise exposure.`;
+        } 
+        else if (patient.patternDescription.includes("presbycusis") || (patient.age >= 65 && patient.patternDescription.includes("hearing loss"))) {
+            patientInfo += `\nASHA guidelines note that age-related hearing loss (presbycusis) becomes one of the most common sensory deficits as adults age. It is the third most common chronic health condition in older adults. 
+
+When testing older adults, ASHA recommends being aware that they may have difficulty with the testing process. Consider using pulsed tones to increase awareness of the stimuli as recommended by ASHA, as this can be particularly helpful for older patients who may have decreased attention or auditory processing issues alongside their hearing loss.`;
+        }
+        else if (patient.patternDescription.includes("conductive")) {
+            patientInfo += `\nFor patients with suspected conductive hearing loss, ASHA recommends both air-conduction and bone-conduction testing. Bone-conduction audiometry utilizes vibrations of the skull as testing stimuli to bypass potential problems in the outer and middle ear.
+
+According to ASHA standards, bone-conduction thresholds should be assessed at 250 Hz, 500 Hz, 1000 Hz, 2000 Hz, 3000 Hz, and 4000 Hz to identify air-bone gaps characteristic of conductive hearing loss. Special attention to low and mid-frequencies (250-2000 Hz) is often helpful for conductive hearing loss assessment.`;
+        }
+        else if (patient.age < 18) {
+            patientInfo += `\nASHA notes that for pediatric patients, developmental age may require modifications to standard testing procedures. Visual reinforcement, conditioned play, or computerized audiometry may be used as appropriate.
+
+For children with suspected hearing loss, ASHA suggests that appropriate modifications be made while maintaining reliable testing standards. The frequency presentation order must remain consistent to ensure accurate results.`;
+        }
+        else {
+            patientInfo += `\nASHA recommends a standard pure-tone audiometry protocol for this patient. If the hearing sensitivity in one ear is known to be better, ASHA suggests testing that ear first. Extended high-frequency audiometry (9000-20000 Hz) may be considered if there are specific concerns such as exposure to noise or ototoxic chemicals.
+
+According to ASHA, modifications for potential issues encountered during testing may include using pulsed signals for patients with tinnitus, addressing claustrophobia by seating the individual facing the window, or using insert earphones to address collapsed ear canals.`;
+        }
+        
         // Update the instructor feedback message
         updateFeedback(patientInfo);
     }
@@ -1986,17 +2075,20 @@ function resetTest() {
     intensitySlider.value = '30';
     intensityValue.textContent = '30 dB HL';
     
-    // Reset educational note
-    provideHughsonWestlakeEducationalFeedback('INITIAL');
+    // Instead of directly calling provideHughsonWestlakeEducationalFeedback
+    // Just update the feedback with initial instructions and avoid duplication
+    updateFeedback("Test reset. Start by testing at 1000 Hz at 30 dB HL in the left ear. Follow the protocol shown in the sidebar.");
     
     // Set the ear to the left ear to start
-    leftEarButton.click();
+    if (leftEarButton) {
+        leftEarButton.click();
+    }
 }
 
 // Check if audiogram is complete (all frequencies tested in both ears)
 function isAudiogramComplete() {
     // Check if all frequencies have been tested
-    const requiredFrequencies = [250, 500, 1000, 1500, 2000, 3000, 4000, 6000, 8000];
+    const requiredFrequencies = [1000, 1500, 2000, 3000, 4000, 6000, 8000, 500, 250];
     
     // Check left ear
     const leftComplete = requiredFrequencies.every(freq => audiogramData.left[freq] !== undefined);
@@ -2031,10 +2123,107 @@ function showTrueAudiogram() {
     // Add specific observations about the patient's hearing
     if (currentPatient.patternDescription.includes("noise-induced")) {
         completionNote += "Note the characteristic 'notch' at 3000-6000 Hz typical of noise exposure damage. The 3000 Hz and 6000 Hz thresholds are especially important in identifying early noise-induced damage.";
+        
+        // Add ASHA-specific information for noise-induced hearing loss
+        completionNote += "\n\nASHA CLINICAL GUIDANCE: According to ASHA, noise-induced hearing loss is the most common occupational disease in the world. In young and middle-aged adults like this patient, excessive noise exposure is the most common preventable cause of hearing loss. ASHA recommends that follow-up should include counseling on hearing protection and prevention of further damage, as well as possible referral for a hearing aid evaluation depending on the degree of loss. The patient's occupation as a construction worker is a significant risk factor that should be addressed in your management plan.";
     } else if (currentPatient.patternDescription.includes("presbycusis")) {
         completionNote += "Note the sloping high-frequency loss typical of age-related hearing loss. Observe how the loss progressively worsens from 1500 Hz through 8000 Hz.";
+        
+        // Add ASHA-specific information for presbycusis
+        completionNote += "\n\nASHA CLINICAL GUIDANCE: ASHA classifies this patient's hearing loss as follows based on thresholds:\n";
+        
+        // Find the average threshold for frequencies 500, 1000, 2000, and 4000 Hz for each ear
+        const leftEarThresholds = [
+            currentPatient.hearingThresholds.left[500] || 0,
+            currentPatient.hearingThresholds.left[1000] || 0,
+            currentPatient.hearingThresholds.left[2000] || 0,
+            currentPatient.hearingThresholds.left[4000] || 0
+        ];
+        const rightEarThresholds = [
+            currentPatient.hearingThresholds.right[500] || 0,
+            currentPatient.hearingThresholds.right[1000] || 0,
+            currentPatient.hearingThresholds.right[2000] || 0,
+            currentPatient.hearingThresholds.right[4000] || 0
+        ];
+        
+        const leftAvg = Math.round(leftEarThresholds.reduce((sum, val) => sum + val, 0) / leftEarThresholds.length);
+        const rightAvg = Math.round(rightEarThresholds.reduce((sum, val) => sum + val, 0) / rightEarThresholds.length);
+        
+        // Add ASHA classification
+        let leftDegree = "Normal";
+        if (leftAvg > 90) leftDegree = "Profound";
+        else if (leftAvg > 70) leftDegree = "Severe";
+        else if (leftAvg > 55) leftDegree = "Moderately severe";
+        else if (leftAvg > 40) leftDegree = "Moderate";
+        else if (leftAvg > 25) leftDegree = "Mild";
+        else if (leftAvg > 15) leftDegree = "Slight";
+        
+        let rightDegree = "Normal";
+        if (rightAvg > 90) rightDegree = "Profound";
+        else if (rightAvg > 70) rightDegree = "Severe";
+        else if (rightAvg > 55) rightDegree = "Moderately severe";
+        else if (rightAvg > 40) rightDegree = "Moderate";
+        else if (rightAvg > 25) rightDegree = "Mild";
+        else if (rightAvg > 15) rightDegree = "Slight";
+        
+        completionNote += `- Left ear: ${leftDegree} hearing loss (${leftAvg} dB HL average)\n`;
+        completionNote += `- Right ear: ${rightDegree} hearing loss (${rightAvg} dB HL average)\n\n`;
+        completionNote += "ASHA notes that age-related hearing loss (presbycusis) is one of the most common sensory deficits in older adults and the third most common chronic health condition in this population. ASHA recommends audiologic rehabilitation strategies that may include amplification, assistive listening devices, and communication strategies training.";
+        
     } else if (currentPatient.patternDescription.includes("conductive")) {
         completionNote += "Note the air-bone gap that would be present in conductive hearing loss (not shown in this simplified simulation). The 250, 500, and 1000 Hz thresholds are especially important for conductive hearing loss patterns.";
+        
+        // Add ASHA-specific information for conductive hearing loss
+        completionNote += "\n\nASHA CLINICAL GUIDANCE: According to ASHA, conductive hearing loss is due to a problem conducting sound waves through the outer ear canal, tympanic membrane, or middle ear (ossicles). For this patient with suspected Eustachian tube dysfunction, ASHA would recommend complete audiologic evaluation including both air-conduction and bone-conduction measures to confirm the air-bone gap characteristic of conductive hearing loss.";
+        
+        completionNote += "\n\nASHA standards indicate that bone-conduction thresholds should be assessed at 250 Hz, 500 Hz, 1000 Hz, 2000 Hz, 3000 Hz, and 4000 Hz. Since this patient's notes mention a recent cold, this aligns with possible temporary conductive loss that may resolve. ASHA would recommend appropriate medical referral to an otolaryngologist for further evaluation and possible treatment of the middle ear condition.";
+    } else if (currentPatient.age < 18) {
+        // Add ASHA-specific information for pediatric patients
+        completionNote += "\n\nASHA CLINICAL GUIDANCE: For pediatric patients, ASHA emphasizes the importance of early identification and intervention for hearing loss. According to ASHA, approximately half of all prelingual hearing loss cases are due to genetic causes, including genetic syndromes and nonsyndromic genetic inheritance, while the other half are due to preventable causes.";
+        
+        completionNote += "\n\nASHA recommends that pediatric testing should be developmentally appropriate, possibly using visual reinforcement, conditioned play, or computerized audiometry as modifications. Follow-up should include appropriate referrals for early intervention services and possible amplification based on the degree of hearing loss.";
+    } else {
+        // Add general ASHA guidance for other hearing loss patterns
+        completionNote += "\n\nASHA CLINICAL GUIDANCE: According to ASHA, hearing loss can be described by variation in type, degree, and configuration. This patient's audiogram shows the following classification based on ASHA standards:\n";
+        
+        // Find the average threshold for frequencies 500, 1000, 2000, and 4000 Hz for each ear
+        const leftEarThresholds = [
+            currentPatient.hearingThresholds.left[500] || 0,
+            currentPatient.hearingThresholds.left[1000] || 0,
+            currentPatient.hearingThresholds.left[2000] || 0,
+            currentPatient.hearingThresholds.left[4000] || 0
+        ];
+        const rightEarThresholds = [
+            currentPatient.hearingThresholds.right[500] || 0,
+            currentPatient.hearingThresholds.right[1000] || 0,
+            currentPatient.hearingThresholds.right[2000] || 0,
+            currentPatient.hearingThresholds.right[4000] || 0
+        ];
+        
+        const leftAvg = Math.round(leftEarThresholds.reduce((sum, val) => sum + val, 0) / leftEarThresholds.length);
+        const rightAvg = Math.round(rightEarThresholds.reduce((sum, val) => sum + val, 0) / rightEarThresholds.length);
+        
+        // Add ASHA classification
+        let leftDegree = "Normal";
+        if (leftAvg > 90) leftDegree = "Profound";
+        else if (leftAvg > 70) leftDegree = "Severe";
+        else if (leftAvg > 55) leftDegree = "Moderately severe";
+        else if (leftAvg > 40) leftDegree = "Moderate";
+        else if (leftAvg > 25) leftDegree = "Mild";
+        else if (leftAvg > 15) leftDegree = "Slight";
+        
+        let rightDegree = "Normal";
+        if (rightAvg > 90) rightDegree = "Profound";
+        else if (rightAvg > 70) rightDegree = "Severe";
+        else if (rightAvg > 55) rightDegree = "Moderately severe";
+        else if (rightAvg > 40) rightDegree = "Moderate";
+        else if (rightAvg > 25) rightDegree = "Mild";
+        else if (rightAvg > 15) rightDegree = "Slight";
+        
+        completionNote += `- Left ear: ${leftDegree} hearing loss (${leftAvg} dB HL average)\n`;
+        completionNote += `- Right ear: ${rightDegree} hearing loss (${rightAvg} dB HL average)\n\n`;
+        
+        completionNote += "ASHA emphasizes a person-centered approach to hearing healthcare. The assessment, treatment, and management of hearing loss and related disorders should be an interprofessional process involving audiologists, speech-language pathologists, otolaryngologists, and other specialists as needed.";
     }
     
     educationalNote.textContent = completionNote;
